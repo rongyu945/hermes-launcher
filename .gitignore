@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+*.app/Contents/_CodeSignature/
+
+# Build
+build/
+dist/
+
+# Logs
+*.log
+
+# Editor
+.vscode/
+.idea/
+
+# Hermes 本地状态（不发布）
+*.hermes-nickname
