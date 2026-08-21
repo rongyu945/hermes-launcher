@@ -1,13 +1,17 @@
 #!/bin/bash
 # Hermes 对话启动器 — 由 Hermes.app 调用
-# 功能：开始新对话 / 恢复历史对话 / 删除对话记录 / 切换模型 / 更改昵称
+# 功能：开始新对话 / 恢复历史对话 / 删除对话记录 / 切换模型 / 更改昵称 / 最近删除
 # 说明：Hermes 的所有对话自动保存在 ~/.hermes/state.db，这里只是选择入口。
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 HERMES_BIN="$(command -v hermes 2>/dev/null || printf '%s' "$HOME/.local/bin/hermes")"
 
-GREEN=$'\033[0;32m'; CYAN=$'\033[0;36m'; YELLOW=$'\033[1;33m'
+GREEN=$'\033[0;32m'; CYAN=$'\033[0;36m'; YELLOW=$'\033[1;33m'; BLUE=$'\033[0;34m'
 RED=$'\033[0;31m'; BRIGHT_RED=$'\033[91m'; BOLD=$'\033[1m'; DIM=$'\033[2m'; NC=$'\033[0m'
+
+# ---------- 最近删除（回收站）----------
+TRASH_FILE="$HOME/.hermes/.hermes-trash"
+TRASH_DAYS=7   # 超过 7 天自动彻底删除
 
 NICKNAME_FILE="$HOME/.hermes/.hermes-nickname"
 
@@ -67,6 +71,7 @@ fetch_sessions() {
     [ ${#line} -lt 84 ] && continue
     id="${line:62:22}"
     [[ "$id" =~ ^[0-9]{8}_[0-9]{6}_[a-f0-9]{6}$ ]] || continue
+    in_trash "$id" && continue   # 跳过回收站里的
     title="${line:0:28}"
     t="${line:48:14}"
     # 去尾部空格
@@ -79,6 +84,77 @@ fetch_sessions() {
     SESSION_TIMES+=("$t")
   done < <("$HERMES_BIN" sessions list --limit "${1:-20}" 2>/dev/null | tail -n +3)
 }
+
+# ---------- 最近删除（回收站）----------
+# 清单格式：每行 "删除时间戳|会话ID|标题"
+trash_load() {   # 读清单到全局数组 TRASH_TS TRASH_IDS TRASH_TITLES
+  TRASH_TS=(); TRASH_IDS=(); TRASH_TITLES=()
+  [ -f "$TRASH_FILE" ] || return 0
+  local line ts id title
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    ts="${line%%|*}"; rest="${line#*|}"
+    id="${rest%%|*}"; title="${rest#*|}"
+    TRASH_TS+=("$ts"); TRASH_IDS+=("$id"); TRASH_TITLES+=("$title")
+  done < "$TRASH_FILE"
+}
+
+trash_save() {   # 把全局数组写回清单
+  local i
+  : > "$TRASH_FILE"
+  for ((i=0; i<${#TRASH_IDS[@]}; i++)); do
+    printf '%s|%s|%s\n' "${TRASH_TS[$i]}" "${TRASH_IDS[$i]}" "${TRASH_TITLES[$i]}" >> "$TRASH_FILE"
+  done
+}
+
+in_trash() {  # $1=id  判断 ID 是否在回收站
+  local i
+  for ((i=0; i<${#TRASH_IDS[@]}; i++)); do
+    [ "${TRASH_IDS[$i]}" = "$1" ] && return 0
+  done
+  return 1
+}
+
+trash_add() {  # $1=id $2=title  把会话加入回收站（软删除）
+  local now
+  now=$(date +%s)
+  TRASH_TS+=("$now"); TRASH_IDS+=("$1"); TRASH_TITLES+=("$2")
+  trash_save
+}
+
+trash_remove() {  # $1=id  从回收站移除（恢复）
+  local i new_ts=() new_ids=() new_titles=()
+  for ((i=0; i<${#TRASH_IDS[@]}; i++)); do
+    [ "${TRASH_IDS[$i]}" = "$1" ] && continue
+    new_ts+=("${TRASH_TS[$i]}"); new_ids+=("${TRASH_IDS[$i]}"); new_titles+=("${TRASH_TITLES[$i]}")
+  done
+  TRASH_TS=("${new_ts[@]}"); TRASH_IDS=("${new_ids[@]}"); TRASH_TITLES=("${new_titles[@]}")
+  trash_save
+}
+
+trash_auto_purge() {  # 自动清理超过 7 天的（真正删除数据库记录 + 从清单移除）
+  [ -f "$TRASH_FILE" ] || return 0
+  trash_load
+  local i now kept_ts=() kept_ids=() kept_titles=() expired=()
+  now=$(date +%s)
+  for ((i=0; i<${#TRASH_IDS[@]}; i++)); do
+    if (( now - TRASH_TS[$i] > TRASH_DAYS*86400 )); then
+      expired+=("${TRASH_IDS[$i]}")
+    else
+      kept_ts+=("${TRASH_TS[$i]}"); kept_ids+=("${TRASH_IDS[$i]}"); kept_titles+=("${TRASH_TITLES[$i]}")
+    fi
+  done
+  TRASH_TS=("${kept_ts[@]}"); TRASH_IDS=("${kept_ids[@]}"); TRASH_TITLES=("${kept_titles[@]}")
+  trash_save
+  for id in "${expired[@]}"; do
+    "$HERMES_BIN" sessions delete --yes "$id" >/dev/null 2>&1
+  done
+  [ ${#expired[@]} -gt 0 ] && echo -e "${DIM}  已自动清理 ${#expired[@]} 条超过 ${TRASH_DAYS} 天的对话${NC}"
+}
+
+# 启动时自动清理 + 加载回收站
+trash_auto_purge
+trash_load
 
 # 渲染会话列表（首页/删除/历史共用）
 render_sessions() {  # $1=起始下标(含) $2=结束下标(不含)
@@ -112,7 +188,7 @@ print_main_menu() {
   echo -e "  ${BOLD}${GREEN}0${NC}) 开始新对话"
   render_sessions 0 ${#SESSION_IDS[@]}
   echo
-  echo -e "  ${DIM}当前模型: ${BOLD}$(current_model)${NC}    ${BOLD}${YELLOW}d${NC}) 删除对话记录  ${BOLD}${CYAN}m${NC}) 查看更早历史  ${BOLD}${RED}s${NC}) 切换模型    ${BOLD}${GREEN}n${NC}) 更改昵称"
+  echo -e "  ${DIM}当前模型: ${BOLD}$(current_model)${NC}    ${BOLD}${YELLOW}d${NC}) 删除对话记录  ${BOLD}${CYAN}m${NC}) 查看更早历史  ${BOLD}${RED}s${NC}) 切换模型    ${BOLD}${GREEN}n${NC}) 更改昵称  ${BOLD}${BLUE}r${NC}) 最近删除"
   echo
 }
 
@@ -158,21 +234,17 @@ delete_menu() {
     fi
     echo
     for num in "${picks[@]}"; do
-      echo -e "  ${RED}将删除:${NC} ${SESSION_TITLES[$((num-1))]}  (${SESSION_IDS[$((num-1))]})"
+      echo -e "  ${RED}将移入最近删除:${NC} ${SESSION_TITLES[$((num-1))]}  (${SESSION_IDS[$((num-1))]})"
     done
-    printf '  确认删除？(按回车确认，n 取消): '
+    printf '  确认移入最近删除？(按回车确认，n 取消): '
     read -r confirm
     [[ "$confirm" =~ ^[nN] ]] && { echo "已取消"; sleep 1; continue; }
-    # 执行删除并在本地同步列表（不重新调用 hermes，删除后立即回到列表不卡顿）
+    # 软删除：加入回收站（不真正删除数据库），本地同步列表
     local kept_ids=() kept_titles=() kept_times=()
     for ((i=0; i<${#SESSION_IDS[@]}; i++)); do
       if [[ " ${picks[*]} " == *" $((i+1)) "* ]]; then
-        if "$HERMES_BIN" sessions delete --yes "${SESSION_IDS[$i]}" >/dev/null 2>&1; then
-          echo -e "${GREEN}  已删除: ${SESSION_TITLES[$i]}${NC}"
-        else
-          echo -e "${RED}  删除失败: ${SESSION_TITLES[$i]}${NC}"
-          kept_ids+=("${SESSION_IDS[$i]}"); kept_titles+=("${SESSION_TITLES[$i]}"); kept_times+=("${SESSION_TIMES[$i]}")
-        fi
+        trash_add "${SESSION_IDS[$i]}" "${SESSION_TITLES[$i]}"
+        echo -e "${GREEN}  已移入最近删除: ${SESSION_TITLES[$i]}${NC}"
       else
         kept_ids+=("${SESSION_IDS[$i]}"); kept_titles+=("${SESSION_TITLES[$i]}"); kept_times+=("${SESSION_TIMES[$i]}")
       fi
@@ -288,6 +360,72 @@ rename_nickname() {
   sleep 1
 }
 
+# ---------- 最近删除（回收站）----------
+trash_menu() {
+  local mode="normal"   # normal=普通(编号恢复)，del=彻底删除模式(编号彻底删)
+  while true; do
+    trash_load   # 重新加载，反映最新状态
+    set_win_title "Hermes · 最近删除"
+    clear
+    echo
+    echo -e "  ${BOLD}${YELLOW}═══ 最近删除 ═══${NC}"
+    if [ ${#TRASH_IDS[@]} -eq 0 ]; then
+      echo
+      echo -e "  ${DIM}回收站为空${NC}"
+      echo
+      read -r -p "  按回车返回..."
+      return
+    fi
+    echo
+    local now i di remain
+    now=$(date +%s)
+    for ((i=0; i<${#TRASH_IDS[@]}; i++)); do
+      di=$(( (now - TRASH_TS[$i]) / 86400 ))
+      [ "$di" -lt 0 ] && di=0
+      remain=$(( TRASH_DAYS - di ))
+      printf '  %2d) %s  %s(已 %d 天，剩 %d 天自动清除)%s\n' "$((i+1))" \
+        "${TRASH_TITLES[$i]}" "${DIM}" "$di" "$remain" "${NC}"
+    done
+    echo
+    if [ "$mode" = "del" ]; then
+      echo -e "  ${RED}[[ 彻底删除模式 ]]${NC} 输入编号将${BOLD}彻底删除${NC}（不可恢复）；b 退出该模式"
+    else
+      echo -e "  ${DIM}输入编号恢复；x 进入彻底删除模式；b 返回（超过 ${TRASH_DAYS} 天自动清除）${NC}"
+    fi
+    echo
+    printf '  选择: '
+    read -r sel
+    case "$sel" in
+      b|B|"") 
+        if [ "$mode" = "del" ]; then mode="normal"; continue; fi
+        return ;;
+      x|X)
+        mode="del"; continue ;;
+      *[0-9]*)
+        if [[ "$sel" =~ ^[0-9]+$ ]]; then
+          local n=$sel
+          if (( n >= 1 && n <= ${#TRASH_IDS[@]} )); then
+            local tid=${TRASH_IDS[$((n-1))]}
+            if [ "$mode" = "del" ]; then
+              "$HERMES_BIN" sessions delete --yes "$tid" >/dev/null 2>&1
+              trash_remove "$tid"
+              echo -e "${RED}  已彻底删除: ${TRASH_TITLES[$((n-1))]}${NC}"; sleep 1
+            else
+              trash_remove "$tid"
+              echo -e "${GREEN}  已恢复: ${TRASH_TITLES[$((n-1))]}${NC}"; sleep 1
+            fi
+          else
+            echo -e "${RED}  无效编号${NC}"; sleep 1
+          fi
+        else
+          echo -e "${RED}  无效选项: $sel${NC}"; sleep 1
+        fi
+        ;;
+      *) echo -e "${RED}  无效选项: $sel${NC}"; sleep 1 ;;
+    esac
+  done
+}
+
 # ---------- 主循环 ----------
 main_loop() {
   while true; do
@@ -302,6 +440,7 @@ main_loop() {
       m|M) history_menu ;;
       s|S) model_menu ;;
       n|N) rename_nickname ;;
+      r|R) trash_menu ;;
       *)
         if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#SESSION_IDS[@]})); then
           run_hermes "--resume ${SESSION_IDS[$((choice-1))]}"
