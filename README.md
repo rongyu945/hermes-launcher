@@ -2,6 +2,8 @@
 
 一个 macOS 原生风格的图形启动器，让你**双击即可进入 Hermes Agent 对话**，无需打开终端手动输入命令。
 
+> 🌐 **语言 / Language:** [简体中文](./README.md) | [English](./README_EN.md)
+
 ![macOS](https://img.shields.io/badge/macOS-12.0%2B-333333?logo=apple&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Bash](https://img.shields.io/badge/Bash-3.2%2B-4EAA25?logo=gnubash&logoColor=white)
@@ -30,6 +32,8 @@
 | 🖱️ **一键启动** | 双击 App 图标，自动打开 Terminal 窗口并进入 Hermes 对话菜单 |
 | 💾 **对话持久化** | 所有对话自动保存在 `~/.hermes/state.db`，退出后随时恢复 |
 | 📋 **历史会话列表** | 首页显示最近 20 条对话，按编号一键恢复 |
+| 🕐 **最近发言排序** | 会话按各自**最后一条消息时间**倒序排列，最近发言的排最前 |
+| 🕒 **相对时间显示** | 标题后显示友好相对时间：`just now` / `3m ago` / `yesterday` / 日期，统一灰色 |
 | 🔍 **更早历史浏览** | 按 `m` 浏览 300 条历史，本地分页，输入编号直接打开 |
 | 🗑️ **删除对话** | 按 `d` 删除对话，支持多选，删除后移入「最近删除」回收站 |
 | 🗑️ **最近删除** | 按 `r` 进入回收站，可恢复或彻底删除；超 7 天自动清理 |
@@ -57,6 +61,8 @@
 
   请选择: _
 ```
+
+> 💡 标题后面括号里的时间采用**相对时间**（如 `3m ago`、`yesterday`），并统一显示为**灰色**，各界面观感一致。
 
 ---
 
@@ -108,7 +114,7 @@ cp -R build/Hermes.app /Applications/
   m) 查看更早历史
   s) 切换模型
   n) 更改昵称
-  q) 退出
+  r) 最近删除
 ```
 
 ### 窗口行为
@@ -126,7 +132,7 @@ cp -R build/Hermes.app /Applications/
 
 ### 2. 恢复历史对话（`1-20`）
 
-首页列出最近 20 条对话，输入对应编号即可无缝继续之前的对话。Hermes 会自动恢复上下文。
+首页列出最近 20 条对话（按各自**最近发言时间**倒序，最近发言的排最前），输入对应编号即可无缝继续之前的对话。Hermes 会自动恢复上下文。标题后括号内显示**相对时间**（`just now` / `Xm ago` / `yesterday` / 日期），统一灰色。
 
 ### 3. 删除对话记录（`d`）
 
@@ -209,10 +215,10 @@ cp -R build/Hermes.app /Applications/
 
 | 文件 | 用途 |
 |------|------|
-|| `~/.hermes/state.db` | 所有对话数据库（Hermes 自动维护） |
-|| `~/.hermes/config.yaml` | 模型配置（默认模型/provider/base_url） |
-|| `~/.hermes/.hermes-nickname` | 昵称（首次启动自动创建） |
-|| `~/.hermes/.hermes-trash` | 最近删除回收站清单（删除时间戳|会话ID|标题） |
+| `~/.hermes/state.db` | 所有对话数据库（Hermes 自动维护） |
+| `~/.hermes/config.yaml` | 模型配置（默认模型/provider/base_url） |
+| `~/.hermes/.hermes-nickname` | 昵称（首次启动自动创建） |
+| `~/.hermes/.hermes-trash` | 最近删除回收站清单（删除时间戳\|会话ID\|标题） |
 
 ### 支持的模型
 
@@ -273,7 +279,8 @@ hermes-launcher/
 ├── hermes-menu.sh       # 菜单脚本源码（核心）
 ├── launcher.sh          # 启动器脚本源码（窗口管理）
 ├── build.sh             # 一键构建脚本
-├── README.md            # 本文档
+├── README.md            # 本文档（中文）
+├── README_EN.md         # 英文文档
 └── LICENSE              # MIT 许可证
 ```
 
@@ -330,7 +337,8 @@ hermes-launcher/
 ├── hermes-menu.sh                 # 菜单脚本源码
 ├── launcher.sh                    # 启动器源码
 ├── build.sh                       # 构建脚本
-├── README.md                      # 本文档
+├── README.md                      # 本文档（中文）
+├── README_EN.md                   # 英文文档
 └── LICENSE                        # MIT 许可证
 ```
 

@@ -61,28 +61,44 @@ SESSION_TITLES=()
 SESSION_TIMES=()
 
 # ---------- 会话列表 ----------
-# 解析 hermes sessions list 的输出（固定列宽表格）：
-#   Title 占 1-28 列, Workspace 从 30 列, Last Active 从 49 列, ID 从 63 列
-# 用固定列宽切分，避免逐 token 猜测（"yesterday"/"3h ago"/日期等格式都安全）
+# 直接查询 state.db：按本会话最近一条 user/assistant 消息时间倒序（="最近发言"排序），
+# 括号显示相对时间（just now / Xm ago / yesterday / 日期）。
+# 固定列宽解析已被 SQL 直查取代。
+# 把 unix 时间戳转成相对时间（just now / Xm ago / yesterday / Nd ago / 日期）
+rel_time() {  # $1=unix epoch（秒）
+  local now diff
+  now=$(date +%s)
+  diff=$(( now - $1 ))
+  if [ "$diff" -lt 0 ]; then diff=0; fi
+  if [ "$diff" -lt 60 ]; then echo "just now"; return; fi
+  if [ "$diff" -lt 3600 ]; then echo "$((diff/60))m ago"; return; fi
+  if [ "$diff" -lt 86400 ]; then echo "$((diff/3600))h ago"; return; fi
+  if [ "$diff" -lt 172800 ]; then echo "yesterday"; return; fi
+  if [ "$diff" -lt 604800 ]; then echo "$((diff/86400))d ago"; return; fi
+  echo "$(date -r "$1" "+%Y-%m-%d")"
+}
+
 fetch_sessions() {
   SESSION_IDS=(); SESSION_TITLES=(); SESSION_TIMES=()
-  local line id title t
+  local line id title epoch
   while IFS= read -r line; do
-    [ ${#line} -lt 84 ] && continue
-    id="${line:62:22}"
-    [[ "$id" =~ ^[0-9]{8}_[0-9]{6}_[a-f0-9]{6}$ ]] || continue
+    [ -z "$line" ] && continue
+    id="${line%%|*}"
     in_trash "$id" && continue   # 跳过回收站里的
-    title="${line:0:28}"
-    t="${line:48:14}"
-    # 去尾部空格
-    title="${title%${title##*[![:space:]]}}"
-    t="${t%${t##*[![:space:]]}}"
+    rest="${line#*|}"
+    title="${rest%%|*}"; rest="${rest#*|}"
+    epoch="${rest%%|*}"
     [ -z "$title" ] && title="(未命名对话)"
     [ "$title" = "—" ] && title="(未命名对话)"
     SESSION_IDS+=("$id")
     SESSION_TITLES+=("$title")
-    SESSION_TIMES+=("$t")
-  done < <("$HERMES_BIN" sessions list --limit "${1:-20}" 2>/dev/null | tail -n +3)
+    SESSION_TIMES+=("$(rel_time "$epoch")")
+  done < <(/usr/bin/sqlite3 ~/.hermes/state.db "
+    SELECT s.id, COALESCE(NULLIF(s.title,''),'—'), CAST(s.started_at AS INTEGER)
+    FROM sessions s
+    WHERE s.source != 'qqbot'
+    ORDER BY (SELECT MAX(m.timestamp) FROM messages m WHERE m.session_id=s.id AND m.role IN ('user','assistant')) DESC
+    LIMIT ${1:-20};" 2>/dev/null)
 }
 
 # ---------- 最近删除（回收站）----------
@@ -156,12 +172,17 @@ trash_auto_purge() {  # 自动清理超过 7 天的（真正删除数据库记�
 trash_auto_purge
 trash_load
 
-# 渲染会话列表（首页/删除/历史共用）
-render_sessions() {  # $1=起始下标(含) $2=结束下标(不含)
-  local i
+# 渲染会话列表起始下标 $1 到结束下标 $2（不含）；（首页用编号格式，删除/历史用纯数字）$3=格式
+render_sessions() {
+  local i fmt
+  fmt="${3:-num}"   # num=编号（首页·绿色序号），plain=纯数字无色序号（删除/历史）
   for ((i=$1; i<$2; i++)); do
-    printf '  %s%2d%s) %s  %s(%s)%s\n' "${BOLD}${GREEN}" "$((i+1))" "${NC}" \
-      "${SESSION_TITLES[$i]}" "${DIM}" "${SESSION_TIMES[$i]}" "${NC}"
+    if [ "$fmt" = "num" ]; then
+      printf '  %s%2d%s) %s  %s(%s)%s\n' "${BOLD}${GREEN}" "$((i+1))" "${NC}" \
+        "${SESSION_TITLES[$i]}" "${DIM}" "${SESSION_TIMES[$i]}" "${NC}"
+    else
+      printf '  %2d) %s  %s(%s)%s\n' "$((i+1))" "${SESSION_TITLES[$i]}" "${DIM}" "${SESSION_TIMES[$i]}" "${NC}"
+    fi
   done
 }
 
@@ -214,7 +235,7 @@ delete_menu() {
     echo -e "  ${BOLD}${RED}═══ 删除对话记录 ═══${NC}"
     echo -e "  ${DIM}输入编号删除，可空格分隔多个；b 返回${NC}"
     echo
-    render_sessions 0 ${#SESSION_IDS[@]}
+    render_sessions 0 ${#SESSION_IDS[@]} plain
     echo
     printf '  要删除的编号: '
     read -r sel
@@ -276,7 +297,7 @@ history_menu() {
     echo
     start=$((page * per)); end=$((start + per))
     [ "$end" -gt "$total" ] && end=$total
-    render_sessions "$start" "$end"
+    render_sessions "$start" "$end" plain
     echo
     printf '  选择: '
     read -r sel
