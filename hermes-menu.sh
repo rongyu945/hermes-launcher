@@ -207,7 +207,9 @@ print_main_menu() {
   echo -e "  ${DIM}别来无恙，山水有相逢${NC}"
   echo
   echo -e "  ${BOLD}${GREEN}0${NC}) 开始新对话"
-  render_sessions 0 ${#SESSION_IDS[@]}
+  local _home_max=20
+  [ "${#SESSION_IDS[@]}" -lt "$_home_max" ] && _home_max=${#SESSION_IDS[@]}
+  render_sessions 0 "$_home_max"
   echo
   echo -e "  ${DIM}当前模型: ${BOLD}$(current_model)${NC}    ${BOLD}${YELLOW}d${NC}) 删除对话记录  ${BOLD}${CYAN}m${NC}) 查看更早历史  ${BOLD}${RED}s${NC}) 切换模型    ${BOLD}${GREEN}n${NC}) 更改昵称  ${BOLD}${BLUE}r${NC}) 最近删除"
   echo
@@ -450,7 +452,7 @@ trash_menu() {
 # ---------- 主循环 ----------
 main_loop() {
   while true; do
-    fetch_sessions
+    fetch_sessions 30   # 拉取 30 条以便回收站过滤后首页仍能补位到 20 条，多出的可在更早历史看到
     print_main_menu
     printf '  请选择: '
     read -r choice
