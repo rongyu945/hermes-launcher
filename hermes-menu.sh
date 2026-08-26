@@ -191,11 +191,15 @@ current_model() {
   grep -m1 "^  default:" ~/.hermes/config.yaml 2>/dev/null | awk '{print $2}'
 }
 
-# 切换默认模型：写入 model.default + provider + base_url（与 /model X --global 落盘一致）
+# 切换默认模型：一次写入 model.default + provider + base_url（直接改 config.yaml 顶部 model 段，避免多次启动 hermes）
+# 实测 hermes config set 每次 ~0.15s ×3，本方案 sed 一次毫秒级
 set_model() {  # $1=模型名 $2=provider $3=base_url
-  "$HERMES_BIN" config set model.default "$1" >/dev/null 2>&1 \
-    && "$HERMES_BIN" config set model.provider "$2" >/dev/null 2>&1 \
-    && "$HERMES_BIN" config set model.base_url "$3" >/dev/null 2>&1
+  local cfg="$HOME/.hermes/config.yaml"
+  /usr/bin/sed -i '' \
+    -e "s|^  default:.*|  default: $1|" \
+    -e "s|^  provider:.*|  provider: $2|" \
+    -e "s|^  base_url:.*|  base_url: $3|" \
+    "$cfg" 2>/dev/null
 }
 
 # ---------- 主菜单 ----------
@@ -219,7 +223,12 @@ run_hermes() {
   local args="$1"
   set_win_title "Hermes"
   clear
-  echo -e "${CYAN}正在启动 Hermes ...${NC}（对话会自动保存；退出后按回车返回菜单）"
+  echo -e "${CYAN}正在启动 Hermes ...${NC}"
+  # 若是恢复已有会话，提示可能因长上下文而慢（避免显得死机）
+  if [[ "$args" == *"--resume"* ]]; then
+    echo -e "  ${DIM}正在加载对话上下文，长对话可能需要几秒...${NC}"
+  fi
+  echo -e "  ${DIM}对话会自动保存；退出后按回车返回菜单${NC}"
   echo
   # shellcheck disable=SC2086
   "$HERMES_BIN" $args
