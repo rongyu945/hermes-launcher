@@ -101,6 +101,24 @@ fetch_sessions() {
     LIMIT ${1:-20};" 2>/dev/null)
 }
 
+# 首页专用：动态拉取直到过滤回收站后仍满 N 条（应对批量删除进回收站导致不足）
+# 从 30 起步，不足则翻倍到 60/120/240...直到凑满 target，或轮次不再增长（取到底了）
+fetch_sessions_fill() {   # $1=目标条数N（默认20）
+  local target=${1:-20} limit=30 prev=0
+  while :; do
+    fetch_sessions "$limit"
+    local cur=${#SESSION_IDS[@]}
+    if [ "$cur" -ge "$target" ]; then
+      break                       # 已凑够
+    fi
+    if [ "$cur" -le "$prev" ]; then
+      break                       # 比上一轮没增长，说明取到底了（没有更多会话）
+    fi
+    prev=$cur
+    limit=$((limit * 2))
+  done
+}
+
 # ---------- 最近删除（回收站）----------
 # 清单格式：每行 "删除时间戳|会话ID|标题"
 trash_load() {   # 读清单到全局数组 TRASH_TS TRASH_IDS TRASH_TITLES
@@ -239,14 +257,16 @@ run_hermes() {
 # ---------- 删除对话 ----------
 delete_menu() {
   while true; do
-    fetch_sessions
+    fetch_sessions_fill 20   # 动态拉取，过滤回收站后删除页始终满 20 条（应对批量删除）
     set_win_title "Hermes"
     clear
     echo
     echo -e "  ${BOLD}${RED}═══ 删除对话记录 ═══${NC}"
     echo -e "  ${DIM}输入编号删除，可空格分隔多个；b 返回${NC}"
     echo
-    render_sessions 0 ${#SESSION_IDS[@]} plain
+    local _del_max=20
+    [ "${#SESSION_IDS[@]}" -lt "$_del_max" ] && _del_max=${#SESSION_IDS[@]}
+    render_sessions 0 "$_del_max" plain
     echo
     printf '  要删除的编号: '
     read -r sel
@@ -461,7 +481,7 @@ trash_menu() {
 # ---------- 主循环 ----------
 main_loop() {
   while true; do
-    fetch_sessions 30   # 拉取 30 条以便回收站过滤后首页仍能补位到 20 条，多出的可在更早历史看到
+    fetch_sessions_fill 20   # 动态拉取，过滤回收站后首页始终满 20 条（应对批量删除）
     print_main_menu
     printf '  请选择: '
     read -r choice
